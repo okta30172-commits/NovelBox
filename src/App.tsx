@@ -18,7 +18,9 @@ import { EditNovelModal } from './components/EditNovelModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { SettingsView } from './components/SettingsView';
 import { WelcomeHeroModal } from './components/WelcomeHeroModal';
+import { SupabaseSetupModal } from './components/SupabaseSetupModal';
 import { ToastContainer, ToastMessage, ToastType } from './components/Toast';
+import { Database, Sparkles, ExternalLink, ArrowRight } from 'lucide-react';
 
 export default function App() {
   const [novels, setNovels] = useState<Novel[]>([]);
@@ -38,6 +40,11 @@ export default function App() {
   const [editingNovel, setEditingNovel] = useState<Novel | null>(null);
   const [deletingNovel, setDeletingNovel] = useState<Novel | null>(null);
   const [isWelcomeHeroOpen, setIsWelcomeHeroOpen] = useState<boolean>(true);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+
+  // Supabase Status
+  const [isSupabaseActive, setIsSupabaseActive] = useState<boolean>(false);
+  const [needSqlSetup, setNeedSqlSetup] = useState<boolean>(false);
 
   // Settings
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
@@ -50,19 +57,42 @@ export default function App() {
     setToasts((prev) => [...prev, { id, title, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 4500);
   };
 
   const dismissToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  // Check Supabase health & sync
+  const checkSupabase = async (): Promise<boolean> => {
+    const status = await NovelStorage.checkSupabaseStatus();
+    if (status.connected && status.tableExists) {
+      setIsSupabaseActive(true);
+      setNeedSqlSetup(false);
+      // Reload library from Supabase
+      const res = await NovelStorage.initLibrary();
+      setNovels(res.novels);
+      return true;
+    } else if (status.connected && !status.tableExists) {
+      setIsSupabaseActive(false);
+      setNeedSqlSetup(true);
+      return false;
+    } else {
+      setIsSupabaseActive(false);
+      return false;
+    }
+  };
+
   // Initialize Library & Settings
   const loadLibrary = async () => {
     setIsLoading(true);
     try {
-      const list = await NovelStorage.initLibrary();
-      setNovels(list);
+      const res = await NovelStorage.initLibrary();
+      setNovels(res.novels);
+      setIsSupabaseActive(res.isSupabaseActive);
+      setNeedSqlSetup(res.needSqlSetup);
+
       const userSettings = NovelStorage.getUserSettings();
       setSettings(userSettings);
     } catch (err) {
@@ -102,7 +132,6 @@ export default function App() {
   // Reading Actions
   const handleStartReading = (novel: Novel) => {
     setReadingNovel(novel);
-    // Auto-update last read time
     NovelStorage.updateReadingProgress(novel.id, novel.currentPage || 1);
   };
 
@@ -153,7 +182,7 @@ export default function App() {
       setReadingNovel(null);
     }
     setDeletingNovel(null);
-    showToast('Novel Dihapus', `Novel "${novel.title}" telah dihapus dari perpustakaan.`, 'info');
+    showToast('Novel Dihapus', `Novel "${novel.title}" telah dihapus.`, 'info');
   };
 
   // Add Novel
@@ -172,13 +201,12 @@ export default function App() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      showToast('Unduhan Dimulai', `File PDF "${novel.title}" siap dibaca.`, 'success');
+      showToast('Unduhan Dimulai', `File PDF "${novel.title}" siap dinikmati.`, 'success');
     } catch {
       showToast('Gagal Mengunduh', 'Tidak dapat mengunduh berkas PDF.', 'error');
     }
   };
 
-  // Count favorites
   const favoritesCount = novels.filter((n) => n.isFavorite).length;
 
   return (
@@ -187,7 +215,16 @@ export default function App() {
       {/* Toast Notification Container */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {/* Welcome Hero / Poster Modal matching User's Uploaded Attachment */}
+      {/* Supabase Setup Modal */}
+      <SupabaseSetupModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        isTableReady={isSupabaseActive}
+        onCheckStatus={checkSupabase}
+        onShowToast={showToast}
+      />
+
+      {/* Welcome Hero / Poster Modal */}
       <WelcomeHeroModal
         isOpen={isWelcomeHeroOpen}
         onClose={() => setIsWelcomeHeroOpen(false)}
@@ -228,6 +265,8 @@ export default function App() {
             }}
             onOpenAddModal={() => setIsAddModalOpen(true)}
             onOpenWelcome={() => setIsWelcomeHeroOpen(true)}
+            onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+            isSupabaseActive={isSupabaseActive}
             activeTab={activeTab}
             onTabChange={(tab) => {
               setSelectedNovel(null);
@@ -237,6 +276,24 @@ export default function App() {
             totalNovelsCount={novels.length}
             userName={settings.userName || 'Budi'}
           />
+
+          {/* Banner notification if Supabase table needs SQL schema setup */}
+          {needSqlSetup && (
+            <div className="bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-white px-4 py-2 text-xs flex items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2 max-w-4xl mx-auto flex-1">
+                <Database className="w-4 h-4 shrink-0" />
+                <span>
+                  <strong>Koneksi Supabase Aktif:</strong> Jalankan skrip SQL satu kali di Dashboard Supabase untuk membuat tabel cloud.
+                </span>
+              </div>
+              <button
+                onClick={() => setIsSupabaseModalOpen(true)}
+                className="px-3 py-1 rounded-full bg-white text-amber-900 font-bold hover:bg-amber-50 shrink-0 transition-all cursor-pointer shadow-xs"
+              >
+                Salin Skrip SQL &rarr;
+              </button>
+            </div>
+          )}
 
           {/* Main Body with Sidebar */}
           <div className="flex-1 flex max-w-7xl w-full mx-auto">
@@ -332,6 +389,8 @@ export default function App() {
                   novels={novels}
                   onReloadNovels={loadLibrary}
                   onOpenWelcomeHero={() => setIsWelcomeHeroOpen(true)}
+                  onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+                  isSupabaseActive={isSupabaseActive}
                   onShowToast={showToast}
                 />
               )}

@@ -1,6 +1,7 @@
 import { Novel, Bookmark } from '../types/novel';
 import { SAMPLE_NOVELS } from '../data/sampleNovels';
 import { generateNovelPdfBlob } from './pdfGenerator';
+import { SupabaseService, SupabaseHealthStatus } from './supabase';
 
 const DB_NAME = 'novea_digital_library_db';
 const DB_VERSION = 1;
@@ -33,7 +34,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   showWelcomeHero: true,
 };
 
-// Open or initialize IndexedDB
+// Open or initialize IndexedDB for local fallback/cache
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
@@ -50,7 +51,7 @@ function openDB(): Promise<IDBDatabase> {
         db.createObjectStore(STORES.NOVELS, { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains(STORES.BLOBS)) {
-        db.createObjectStore(STORES.BLOBS); // key is string (blobId)
+        db.createObjectStore(STORES.BLOBS);
       }
       if (!db.objectStoreNames.contains(STORES.BOOKMARKS)) {
         const bmStore = db.createObjectStore(STORES.BOOKMARKS, { keyPath: 'id' });
@@ -66,41 +67,79 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-// In-memory object URL cache so we can revoke them on unload or replace
 const blobUrlCache = new Map<string, string>();
 
 export const NovelStorage = {
   /**
-   * Initializes library with sample novels if empty
+   * Check Supabase Cloud Connection & Health
    */
-  async initLibrary(): Promise<Novel[]> {
+  async checkSupabaseStatus(): Promise<SupabaseHealthStatus> {
+    return await SupabaseService.checkHealth();
+  },
+
+  /**
+   * Initializes library:
+   * First tries Supabase Cloud Database!
+   * If table exists and has data, loads from Supabase.
+   * If table doesn't exist yet, falls back to local cache & signals caller.
+   */
+  async initLibrary(): Promise<{ novels: Novel[]; isSupabaseActive: boolean; needSqlSetup: boolean }> {
     try {
-      const existing = await this.getAllNovels();
+      const health = await SupabaseService.checkHealth();
+
+      if (health.connected && health.tableExists) {
+        const { novels, fromSupabase } = await SupabaseService.getNovels();
+        if (fromSupabase && novels.length > 0) {
+          // Sync with local cache
+          try {
+            localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(novels));
+          } catch {}
+          return { novels, isSupabaseActive: true, needSqlSetup: false };
+        }
+      }
+
+      // If Supabase is connected but table is not yet created
+      const needSqlSetup = health.connected && !health.tableExists;
+
+      // Fallback to local cache or sample novels
+      const existing = await this.getAllNovelsLocal();
       if (existing && existing.length > 0) {
-        return existing;
+        return { novels: existing, isSupabaseActive: false, needSqlSetup };
       }
-      // Populate with sample novels
+
+      // Seed local sample novels
       for (const novel of SAMPLE_NOVELS) {
-        await this.saveNovel(novel);
+        await this.saveNovelLocal(novel);
       }
-      return SAMPLE_NOVELS;
+      return { novels: SAMPLE_NOVELS, isSupabaseActive: false, needSqlSetup };
     } catch (err) {
       console.warn('Fallback init with local storage:', err);
       const cached = localStorage.getItem(LOCALSTORAGE_KEY);
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch {}
-      }
-      localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(SAMPLE_NOVELS));
-      return SAMPLE_NOVELS;
+      const novels = cached ? JSON.parse(cached) : SAMPLE_NOVELS;
+      return { novels, isSupabaseActive: false, needSqlSetup: true };
     }
   },
 
   /**
-   * Get all novels
+   * Migrate current local novels into Supabase cloud database
    */
-  async getAllNovels(): Promise<Novel[]> {
+  async syncAllToSupabase(novelsToSync: Novel[]): Promise<{ success: boolean; count: number; error?: string }> {
+    try {
+      let count = 0;
+      for (const novel of novelsToSync) {
+        const ok = await SupabaseService.saveNovel(novel);
+        if (ok) count++;
+      }
+      return { success: true, count };
+    } catch (err: any) {
+      return { success: false, count: 0, error: err?.message };
+    }
+  },
+
+  /**
+   * Get all novels from local IndexedDB
+   */
+  async getAllNovelsLocal(): Promise<Novel[]> {
     try {
       const db = await openDB();
       return new Promise((resolve, reject) => {
@@ -109,7 +148,6 @@ export const NovelStorage = {
         const req = store.getAll();
         req.onsuccess = () => {
           const list = req.result as Novel[];
-          // Backup to local storage for quick offline sync
           try {
             localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(list));
           } catch {}
@@ -117,7 +155,7 @@ export const NovelStorage = {
         };
         req.onerror = () => reject(req.error);
       });
-    } catch (err) {
+    } catch {
       const cached = localStorage.getItem(LOCALSTORAGE_KEY);
       return cached ? JSON.parse(cached) : [];
     }
@@ -128,24 +166,25 @@ export const NovelStorage = {
    */
   async getNovelById(id: string): Promise<Novel | undefined> {
     try {
-      const db = await openDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORES.NOVELS, 'readonly');
-        const store = tx.objectStore(STORES.NOVELS);
-        const req = store.get(id);
-        req.onsuccess = () => resolve(req.result as Novel | undefined);
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      const all = await this.getAllNovels();
+      const all = await this.getAllNovelsLocal();
       return all.find(n => n.id === id);
+    } catch {
+      return undefined;
     }
   },
 
   /**
-   * Save or update novel
+   * Save novel to Supabase Cloud AND Local Storage
    */
   async saveNovel(novel: Novel): Promise<void> {
+    // 1. Save to Supabase Cloud
+    await SupabaseService.saveNovel(novel);
+
+    // 2. Save locally
+    await this.saveNovelLocal(novel);
+  },
+
+  async saveNovelLocal(novel: Novel): Promise<void> {
     try {
       const db = await openDB();
       await new Promise<void>((resolve, reject) => {
@@ -155,20 +194,23 @@ export const NovelStorage = {
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
       });
-      // sync with localStorage
-      const all = await this.getAllNovels();
+      const all = await this.getAllNovelsLocal();
       try {
         localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(all));
       } catch {}
     } catch (err) {
-      console.error('Error saving novel:', err);
+      console.error('Error saving novel locally:', err);
     }
   },
 
   /**
-   * Delete novel and associated binary files
+   * Delete novel from Supabase Cloud AND Local Storage
    */
   async deleteNovel(id: string): Promise<void> {
+    // 1. Delete from Supabase Cloud
+    await SupabaseService.deleteNovel(id);
+
+    // 2. Delete locally
     try {
       const novel = await this.getNovelById(id);
       const db = await openDB();
@@ -182,33 +224,44 @@ export const NovelStorage = {
         tx.onerror = () => reject(tx.error);
       });
 
-      // Cleanup blob url cache
       if (blobUrlCache.has(id)) {
         URL.revokeObjectURL(blobUrlCache.get(id)!);
         blobUrlCache.delete(id);
       }
-
-      // Sync
-      const all = await this.getAllNovels();
-      try {
-        localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(all));
-      } catch {}
     } catch (err) {
-      console.error('Error deleting novel:', err);
+      console.error('Error deleting novel locally:', err);
     }
   },
 
   /**
-   * Store binary PDF blob into IndexedDB
+   * Upload PDF to Supabase Storage (Cloud)
+   */
+  async uploadPdfToCloud(file: File, fileName: string): Promise<string | null> {
+    return await SupabaseService.uploadPdfFile(file, fileName);
+  },
+
+  /**
+   * Upload Cover to Supabase Storage (Cloud)
+   */
+  async uploadCoverToCloud(file: File, fileName: string): Promise<string | null> {
+    return await SupabaseService.uploadCoverImage(file, fileName);
+  },
+
+  /**
+   * Store binary PDF blob into IndexedDB (as fallback or local cache)
    */
   async storePdfBlob(blobId: string, blob: Blob): Promise<void> {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORES.BLOBS, 'readwrite');
-      const req = tx.objectStore(STORES.BLOBS).put(blob, blobId);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    try {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORES.BLOBS, 'readwrite');
+        const req = tx.objectStore(STORES.BLOBS).put(blob, blobId);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('storePdfBlob error:', e);
+    }
   },
 
   /**
@@ -229,14 +282,19 @@ export const NovelStorage = {
   },
 
   /**
-   * Get accessible PDF URL for reading (returns cached or newly created Blob URL)
+   * Get accessible PDF URL for reading
    */
   async getNovelPdfUrl(novel: Novel): Promise<string> {
+    // If novel has a cloud URL (Supabase storage or external)
+    if (novel.pdfUrl && novel.pdfUrl.startsWith('http')) {
+      return novel.pdfUrl;
+    }
+
     if (blobUrlCache.has(novel.id)) {
       return blobUrlCache.get(novel.id)!;
     }
 
-    // Check if custom uploaded blob exists
+    // Check if custom uploaded blob exists in local IndexedDB
     if (novel.pdfBlobId) {
       const storedBlob = await this.getPdfBlob(novel.pdfBlobId);
       if (storedBlob) {
@@ -244,11 +302,6 @@ export const NovelStorage = {
         blobUrlCache.set(novel.id, url);
         return url;
       }
-    }
-
-    // If novel has a predefined direct URL
-    if (novel.pdfUrl && novel.pdfUrl.startsWith('http')) {
-      return novel.pdfUrl;
     }
 
     // Synthesize valid PDF Blob for sample novel
@@ -266,7 +319,7 @@ export const NovelStorage = {
   },
 
   /**
-   * Toggle favorite state
+   * Toggle favorite state in Cloud and Local
    */
   async toggleFavorite(id: string): Promise<boolean> {
     const novel = await this.getNovelById(id);
@@ -274,24 +327,35 @@ export const NovelStorage = {
     const newState = !novel.isFavorite;
     novel.isFavorite = newState;
     novel.updatedAt = new Date().toISOString();
-    await this.saveNovel(novel);
+
+    // Save to Supabase Cloud
+    await SupabaseService.toggleFavorite(id, newState);
+
+    // Save locally
+    await this.saveNovelLocal(novel);
     return newState;
   },
 
   /**
-   * Update reading progress
+   * Update reading progress in Cloud and Local
    */
   async updateReadingProgress(id: string, pageNumber: number): Promise<void> {
     const novel = await this.getNovelById(id);
     if (!novel) return;
-    novel.currentPage = Math.max(1, Math.min(pageNumber, novel.totalPages));
+    const clamped = Math.max(1, Math.min(pageNumber, novel.totalPages));
+    novel.currentPage = clamped;
     novel.lastReadAt = new Date().toISOString();
     novel.updatedAt = new Date().toISOString();
-    await this.saveNovel(novel);
+
+    // Update in Supabase Cloud
+    await SupabaseService.updateProgress(id, clamped);
+
+    // Update locally
+    await this.saveNovelLocal(novel);
   },
 
   /**
-   * Bookmarks management
+   * Bookmarks
    */
   async getBookmarks(novelId: string): Promise<Bookmark[]> {
     try {
@@ -312,7 +376,7 @@ export const NovelStorage = {
   async addBookmark(bookmark: Bookmark): Promise<void> {
     try {
       const db = await openDB();
-      return new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORES.BOOKMARKS, 'readwrite');
         const req = tx.objectStore(STORES.BOOKMARKS).put(bookmark);
         req.onsuccess = () => resolve();
@@ -326,7 +390,7 @@ export const NovelStorage = {
   async removeBookmark(bookmarkId: string): Promise<void> {
     try {
       const db = await openDB();
-      return new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORES.BOOKMARKS, 'readwrite');
         const req = tx.objectStore(STORES.BOOKMARKS).delete(bookmarkId);
         req.onsuccess = () => resolve();
@@ -353,6 +417,7 @@ export const NovelStorage = {
     const updated = { ...current, ...settings };
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+      SupabaseService.saveUserSettings(updated);
     } catch {}
     return updated;
   },
@@ -361,10 +426,6 @@ export const NovelStorage = {
    * Reset library to defaults
    */
   async resetToDefaults(): Promise<Novel[]> {
-    const all = await this.getAllNovels();
-    for (const n of all) {
-      await this.deleteNovel(n.id);
-    }
     for (const novel of SAMPLE_NOVELS) {
       await this.saveNovel(novel);
     }

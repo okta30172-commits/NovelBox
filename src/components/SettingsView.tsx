@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Novel } from '../types/novel';
 import { UserSettings, NovelStorage } from '../services/storage';
+import { SUPABASE_URL } from '../services/supabase';
 import { 
-  Settings, 
   User, 
   Database, 
   Download, 
@@ -11,8 +11,10 @@ import {
   Sparkles, 
   Check, 
   ShieldCheck, 
-  BookMarked,
-  Heart
+  FileCode,
+  ExternalLink,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -21,6 +23,8 @@ interface SettingsViewProps {
   novels: Novel[];
   onReloadNovels: () => void;
   onOpenWelcomeHero: () => void;
+  onOpenSupabaseModal: () => void;
+  isSupabaseActive: boolean;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -30,11 +34,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   novels,
   onReloadNovels,
   onOpenWelcomeHero,
+  onOpenSupabaseModal,
+  isSupabaseActive,
   onShowToast,
 }) => {
   const [userName, setUserName] = useState(settings.userName || 'Budi');
   const [userBio, setUserBio] = useState(settings.userBio || 'Kolektor novel digital dan penikmat sastra.');
   const [isSaved, setIsSaved] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Backup export
   const handleExportBackup = () => {
@@ -80,9 +87,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     reader.readAsText(file);
   };
 
+  // Sync all to Supabase
+  const handleSyncToSupabase = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await NovelStorage.syncAllToSupabase(novels);
+      if (res.success) {
+        onShowToast('Sinkronisasi Berhasil!', `${res.count} novel berhasil diunggah ke Supabase Cloud.`, 'success');
+      } else {
+        onShowToast('Gagal Sinkronisasi', res.error || 'Pastikan tabel di Supabase sudah siap.', 'error');
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Reset to default sample novels
   const handleResetDefaults = async () => {
-    if (window.confirm('Apakah Anda ingin memulihkan novel contoh bawaan (Pride and Prejudice, Alice, Frankenstein, novel Nusantara, dll)? Novel kustom Anda akan direset.')) {
+    if (window.confirm('Apakah Anda ingin memulihkan novel contoh bawaan? Novel contoh akan diperbarui di perpustakaan.')) {
       await NovelStorage.resetToDefaults();
       onReloadNovels();
       onShowToast('Koleksi Dipulihkan', 'Novel contoh klasik dan lokal berhasil dipulihkan.', 'success');
@@ -109,9 +131,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           Pengaturan Perpustakaan
         </h1>
         <p className="text-xs sm:text-sm text-[#73675C] mt-1">
-          Sesuaikan profil kolektor, kelola pencadangan data, dan atur preferensi membaca.
+          Sesuaikan profil kolektor, kelola koneksi Supabase Cloud, dan atur pencadangan data.
         </p>
       </div>
+
+      {/* Supabase Cloud Connection Status Card */}
+      <section className="p-6 sm:p-8 rounded-3xl bg-white border border-[#E8DEC8] shadow-sm space-y-5">
+        <div className="flex items-center justify-between pb-3 border-b border-[#F0E7D9]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shadow-xs">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-serif-novel text-lg font-bold text-[#3B2C21]">
+                Database & Storage Supabase Cloud
+              </h2>
+              <p className="text-xs text-[#8C6D58]">
+                Koneksi aktif ke Supabase PostgreSQL & Bucket Storage
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border bg-emerald-50 text-emerald-800 border-emerald-300">
+            <span className={`w-2 h-2 rounded-full ${isSupabaseActive ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <span>{isSupabaseActive ? 'Cloud Online' : 'Perlu Setup Tabel'}</span>
+          </div>
+        </div>
+
+        {/* Info Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="p-3.5 rounded-2xl bg-[#FAF6F0] border border-[#EBE3D3]">
+            <p className="text-[#8C6D58] font-medium">Supabase Project Endpoint:</p>
+            <p className="font-mono text-[11px] font-bold text-[#3B2C21] mt-0.5 truncate">{SUPABASE_URL}</p>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-[#FAF6F0] border border-[#EBE3D3]">
+            <p className="text-[#8C6D58] font-medium">Storage Bucket ("novels"):</p>
+            <p className="font-bold text-emerald-800 mt-0.5 flex items-center gap-1">
+              <Check className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Terkonfigurasi untuk Berkas PDF & Gambar</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            onClick={onOpenSupabaseModal}
+            className="px-4 py-2.5 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold shadow-xs flex items-center gap-2 transition-all cursor-pointer"
+          >
+            <FileCode className="w-4 h-4" />
+            <span>Buka Skrip SQL & Pengaturan Supabase</span>
+          </button>
+
+          <button
+            onClick={handleSyncToSupabase}
+            disabled={isSyncing}
+            className="px-4 py-2.5 rounded-full bg-[#FAF6F0] hover:bg-[#EBE3D3] text-[#4A3326] text-xs font-semibold border border-[#E0D5C3] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Novel ke Supabase'}</span>
+          </button>
+
+          <a
+            href="https://supabase.com/dashboard/project/zzfdbszptsokcqchgydi"
+            target="_blank"
+            rel="noreferrer"
+            className="px-4 py-2.5 rounded-full hover:bg-[#FAF6F0] text-[#7A533E] text-xs font-medium flex items-center gap-1.5 transition-all"
+          >
+            <span>Buka Dashboard Supabase</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
+      </section>
 
       {/* Profil Kolektor */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white border border-[#E8DEC8] shadow-sm">
@@ -158,7 +250,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </form>
       </section>
 
-      {/* Tampilan Poster Awal Banner (Matching user image) */}
+      {/* Tampilan Poster Awal Banner */}
       <section className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-[#FAF0F3] to-[#FCE8ED] border border-[#F3CCD6] shadow-sm flex flex-col sm:flex-row items-center justify-between gap-6">
         <div className="space-y-2 text-center sm:text-left">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white text-rose-600 text-xs font-bold border border-rose-200">
@@ -187,7 +279,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="flex items-center gap-2.5 pb-3 border-b border-[#F0E7D9]">
           <Database className="w-5 h-5 text-[#8C6D58]" />
           <h2 className="font-serif-novel text-lg font-bold text-[#3B2C21]">
-            Penyimpanan & Cadangan Data
+            Statistik & Cadangan Berkas
           </h2>
         </div>
 
@@ -209,7 +301,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Actions */}
         <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Export */}
           <button
             onClick={handleExportBackup}
             className="p-4 rounded-2xl bg-[#FAF6F0] hover:bg-[#EBE3D3] border border-[#E0D5C3] text-left transition-all cursor-pointer group"
@@ -221,7 +312,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <p className="text-[11px] text-[#73675C] mt-0.5">Unduh file JSON cadangan seluruh katalog Anda.</p>
           </button>
 
-          {/* Import */}
           <label className="p-4 rounded-2xl bg-[#FAF6F0] hover:bg-[#EBE3D3] border border-[#E0D5C3] text-left transition-all cursor-pointer group">
             <input
               type="file"
@@ -236,7 +326,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <p className="text-[11px] text-[#73675C] mt-0.5">Pulihkan daftar novel dari berkas JSON sebelumnya.</p>
           </label>
 
-          {/* Reset Defaults */}
           <button
             onClick={handleResetDefaults}
             className="p-4 rounded-2xl bg-amber-50/60 hover:bg-amber-100/70 border border-amber-200 text-left transition-all cursor-pointer group"
@@ -253,10 +342,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Info About NOVEA */}
       <section className="p-6 rounded-3xl bg-white/70 border border-[#E8DEC8] text-xs text-[#73675C] flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-[#697D67]" />
+          <ShieldCheck className="w-5 h-5 text-emerald-700" />
           <div>
-            <p className="font-bold text-[#4A3326]">NOVEA Digital Novel Library v2.0</p>
-            <p className="text-[11px]">Didesain khusus untuk kenyamanan membaca novel dan pengelolaan berkas PDF.</p>
+            <p className="font-bold text-[#4A3326]">NOVEA Digital Novel Library &bull; Supabase Edition</p>
+            <p className="text-[11px]">Terhubung ke Supabase PostgreSQL & Storage di cloud.</p>
           </div>
         </div>
         <span className="text-[11px] text-[#8C6D58] italic font-serif">

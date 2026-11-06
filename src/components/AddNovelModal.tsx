@@ -9,7 +9,8 @@ import {
   Sparkles, 
   Check, 
   AlertCircle,
-  BookOpen
+  BookOpen,
+  CloudUpload
 } from 'lucide-react';
 
 interface AddNovelModalProps {
@@ -67,12 +68,14 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
   
   // Cover selection
   const [selectedCoverUrl, setSelectedCoverUrl] = useState<string>(PRESET_COVERS[0].url);
+  const [customCoverFile, setCustomCoverFile] = useState<File | null>(null);
   const [customCoverPreview, setCustomCoverPreview] = useState<string | null>(null);
 
   // PDF file state
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string>('');
 
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +118,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
       return;
     }
 
+    setCustomCoverFile(file);
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
@@ -132,16 +136,37 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
     }
 
     setIsSubmitting(true);
+    setUploadStatus('Menyimpan ke Supabase Cloud...');
 
     try {
       const novelId = `novel-${Date.now()}`;
+      let finalCoverUrl = selectedCoverUrl;
+      let finalPdfUrl: string | undefined = undefined;
       let pdfBlobId: string | undefined = undefined;
 
-      // If user uploaded a real PDF, save to IndexedDB binary store
-      if (pdfFile) {
-        pdfBlobId = `blob-${novelId}`;
-        await NovelStorage.storePdfBlob(pdfBlobId, pdfFile);
+      // 1. Upload cover image to Supabase if custom file selected
+      if (customCoverFile) {
+        setUploadStatus('Mengunggah gambar cover ke Supabase Storage...');
+        const cloudCover = await NovelStorage.uploadCoverToCloud(customCoverFile, customCoverFile.name);
+        if (cloudCover) {
+          finalCoverUrl = cloudCover;
+        }
       }
+
+      // 2. Upload PDF file to Supabase Storage ('novels' bucket)
+      if (pdfFile) {
+        setUploadStatus('Mengunggah berkas PDF ke Supabase Storage...');
+        const cloudPdf = await NovelStorage.uploadPdfToCloud(pdfFile, pdfFile.name);
+        if (cloudPdf) {
+          finalPdfUrl = cloudPdf;
+        } else {
+          // Backup locally if network blip
+          pdfBlobId = `blob-${novelId}`;
+          await NovelStorage.storePdfBlob(pdfBlobId, pdfFile);
+        }
+      }
+
+      setUploadStatus('Mendaftarkan data novel ke Database Supabase...');
 
       const newNovel: Novel = {
         id: novelId,
@@ -149,7 +174,8 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
         author: author.trim(),
         genre: genre,
         description: description.trim(),
-        coverUrl: selectedCoverUrl,
+        coverUrl: finalCoverUrl,
+        pdfUrl: finalPdfUrl,
         pdfBlobId: pdfBlobId,
         pdfFileName: pdfFile ? pdfFile.name : undefined,
         pdfFileSize: pdfFile ? pdfFile.size : undefined,
@@ -160,23 +186,24 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
         publishedYear: publishedYear || new Date().getFullYear(),
         language: 'id',
         readTimeMinutes: Math.round(totalPages * 8),
-        tags: [genre, 'Koleksi Baru', 'PDF'],
+        tags: [genre, 'Supabase Cloud', 'PDF'],
         createdAt: new Date().toISOString(),
         isCustom: true,
         contentPages: [
-          `${title.trim()} - ${author.trim()}\n\nSinopsis:\n${description.trim()}\n\nNovel ini telah berhasil ditambahkan ke koleksi digital NOVEA Anda.`
+          `${title.trim()} - ${author.trim()}\n\nSinopsis:\n${description.trim()}\n\nNovel ini telah berhasil tersimpan di perpustakaan digital Supabase Cloud.`
         ]
       };
 
       await NovelStorage.saveNovel(newNovel);
       onNovelAdded(newNovel);
-      onShowToast('Berhasil Ditambahkan!', `Novel "${newNovel.title}" kini tersimpan di perpustakaan.`, 'success');
+      onShowToast('Berhasil Ditambahkan ke Supabase!', `Novel "${newNovel.title}" kini tersimpan di database cloud.`, 'success');
       onClose();
     } catch (err) {
       console.error(err);
-      onShowToast('Gagal Menyimpan', 'Terjadi kesalahan saat menyimpan novel.', 'error');
+      onShowToast('Gagal Menyimpan', 'Terjadi kesalahan saat menyimpan novel ke cloud.', 'error');
     } finally {
       setIsSubmitting(false);
+      setUploadStatus('');
     }
   };
 
@@ -187,15 +214,15 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-[#E8DEC8]">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#697D67] text-white flex items-center justify-center shadow-xs">
-              <BookOpen className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center shadow-xs">
+              <CloudUpload className="w-5 h-5" />
             </div>
             <div>
               <h2 className="font-serif-novel text-xl font-bold text-[#3B2C21]">
-                Tambahkan Novel ke Koleksi
+                Tambahkan Novel ke Supabase Cloud
               </h2>
               <p className="text-xs text-[#8C6D58]">
-                Unggah berkas PDF dan kelola informasi novel kesayangan Anda.
+                Unggah berkas PDF dan metadata langsung ke database & penyimpanan Supabase.
               </p>
             </div>
           </div>
@@ -223,7 +250,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Contoh: Bumi Manusia"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30 focus:border-[#697D67]"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-700"
               />
             </div>
 
@@ -237,7 +264,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
                 placeholder="Contoh: Pramoedya Ananta Toer"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30 focus:border-[#697D67]"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-700"
               />
             </div>
           </div>
@@ -251,7 +278,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
               <select
                 value={genre}
                 onChange={(e) => setGenre(e.target.value as NovelGenre)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30 cursor-pointer"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30 cursor-pointer"
               >
                 <option value="Klasik">Klasik</option>
                 <option value="Romansa">Romansa</option>
@@ -274,7 +301,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                 type="number"
                 value={publishedYear}
                 onChange={(e) => setPublishedYear(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30"
               />
             </div>
 
@@ -287,7 +314,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                 min="1"
                 value={totalPages}
                 onChange={(e) => setTotalPages(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30"
               />
             </div>
           </div>
@@ -303,18 +330,20 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Tuliskan gambaran singkat cerita atau alasan Anda menyukai novel ini..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-[#697D67]/30 leading-relaxed"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E0D5C3] text-xs sm:text-sm text-[#4A3326] focus:outline-none focus:ring-2 focus:ring-emerald-600/30 leading-relaxed"
             />
           </div>
 
-          {/* PDF File Upload (Strict PDF Validation) */}
+          {/* PDF File Upload */}
           <div className="p-4 rounded-2xl bg-white border border-[#E0D5C3] space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-[#4A3326] flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-[#697D67]" />
-                <span>Upload File Novel (Wajib Format PDF)</span>
+                <FileText className="w-4 h-4 text-emerald-700" />
+                <span>Upload File Novel (Wajib Format PDF ke Supabase)</span>
               </label>
-              <span className="text-[10px] text-[#8C6D58] font-medium">Hanya format .pdf</span>
+              <span className="text-[10px] text-emerald-800 font-semibold px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200">
+                Supabase Storage
+              </span>
             </div>
 
             <input
@@ -327,7 +356,7 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
 
             <div 
               onClick={() => pdfInputRef.current?.click()}
-              className="border-2 border-dashed border-[#D5C6B1] hover:border-[#697D67] rounded-xl p-4 text-center cursor-pointer transition-all bg-[#FAF6F0] hover:bg-[#F2ECE1]"
+              className="border-2 border-dashed border-[#D5C6B1] hover:border-emerald-600 rounded-xl p-4 text-center cursor-pointer transition-all bg-[#FAF6F0] hover:bg-emerald-50/40"
             >
               {pdfFile ? (
                 <div className="flex items-center justify-center gap-2 text-xs font-semibold text-emerald-800">
@@ -336,12 +365,12 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-1">
-                  <Upload className="w-6 h-6 text-[#8C6D58] mx-auto" />
+                  <Upload className="w-6 h-6 text-emerald-700 mx-auto" />
                   <p className="text-xs font-semibold text-[#4A3326]">
                     Klik untuk memilih file PDF dari komputer / perangkat Anda
                   </p>
                   <p className="text-[11px] text-[#8C6D58]">
-                    Validasi ketat dokumen PDF &bull; Tersimpan aman di penyimpanan peramban Anda
+                    File akan diunggah langsung ke Supabase Storage (Bucket "novels")
                   </p>
                 </div>
               )}
@@ -360,12 +389,12 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-[#4A3326] flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-[#8C6D58]" />
-                <span>Cover Novel (Unggah Sendiri atau Pilih Template)</span>
+                <span>Cover Novel (Unggah Gambar atau Pilih Template)</span>
               </label>
               <button
                 type="button"
                 onClick={() => coverInputRef.current?.click()}
-                className="text-xs font-bold text-[#697D67] hover:underline cursor-pointer"
+                className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
               >
                 + Unggah Gambar Cover
               </button>
@@ -382,16 +411,17 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
             {/* Presets Grid */}
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               {PRESET_COVERS.map((preset) => {
-                const isSelected = selectedCoverUrl === preset.url;
+                const isSelected = selectedCoverUrl === preset.url && !customCoverPreview;
                 return (
                   <div
                     key={preset.id}
                     onClick={() => {
                       setSelectedCoverUrl(preset.url);
                       setCustomCoverPreview(null);
+                      setCustomCoverFile(null);
                     }}
                     className={`relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
-                      isSelected ? 'border-[#697D67] ring-2 ring-[#697D67]/30 scale-95' : 'border-transparent opacity-80 hover:opacity-100'
+                      isSelected ? 'border-emerald-600 ring-2 ring-emerald-600/30 scale-95' : 'border-transparent opacity-80 hover:opacity-100'
                     }`}
                   >
                     <img
@@ -400,8 +430,8 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
                       className="w-full h-full object-cover"
                     />
                     {isSelected && (
-                      <div className="absolute inset-0 bg-[#697D67]/30 flex items-center justify-center">
-                        <div className="w-5 h-5 rounded-full bg-white text-[#697D67] flex items-center justify-center">
+                      <div className="absolute inset-0 bg-emerald-700/30 flex items-center justify-center">
+                        <div className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center">
                           <Check className="w-3.5 h-3.5 font-bold" />
                         </div>
                       </div>
@@ -414,39 +444,47 @@ export const AddNovelModal: React.FC<AddNovelModalProps> = ({
             {customCoverPreview && (
               <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-semibold">
                 <Check className="w-4 h-4 text-emerald-600" />
-                <span>Gambar cover kustom berhasil diunggah dan dipilih!</span>
+                <span>Gambar cover kustom terpilih untuk diunggah ke Supabase!</span>
               </div>
             )}
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-4 border-t border-[#E8DEC8] flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-full bg-white hover:bg-[#EBE3D3] text-[#4A3326] text-xs sm:text-sm font-semibold border border-[#E0D5C3] transition-all cursor-pointer"
-            >
-              Batal
-            </button>
+          <div className="pt-4 border-t border-[#E8DEC8] flex items-center justify-between gap-3">
+            {uploadStatus ? (
+              <span className="text-xs text-emerald-800 font-semibold animate-pulse">
+                {uploadStatus}
+              </span>
+            ) : <div />}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#697D67] to-[#4E5D4C] hover:from-[#5A6D58] hover:to-[#3F4D3D] text-white text-xs sm:text-sm font-semibold shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Menyimpan Novel...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>Simpan ke Perpustakaan</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-full bg-white hover:bg-[#EBE3D3] text-[#4A3326] text-xs sm:text-sm font-semibold border border-[#E0D5C3] transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-6 py-2.5 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Mengunggah...</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudUpload className="w-4 h-4" />
+                    <span>Simpan ke Supabase</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
         </form>

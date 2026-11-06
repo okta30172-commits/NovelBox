@@ -1,11 +1,13 @@
 import React from 'react';
-import { BookOpen, PlusCircle, Search, Sparkles, Menu, Heart } from 'lucide-react';
+import { BookOpen, PlusCircle, Search, Sparkles, Heart, Database } from 'lucide-react';
 
 interface NavbarProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onOpenAddModal: () => void;
   onOpenWelcome: () => void;
+  onOpenSupabaseModal: () => void;
+  isSupabaseActive: boolean;
   activeTab: string;
   onTabChange: (tab: string) => void;
   favoritesCount: number;
@@ -18,6 +20,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSearchChange,
   onOpenAddModal,
   onOpenWelcome,
+  onOpenSupabaseModal,
+  isSupabaseActive,
   onTabChange,
   favoritesCount,
   userName,
@@ -30,7 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => onTabChange('beranda')}
-            className="flex items-center gap-2.5 text-left group transition-transform active:scale-95"
+            className="flex items-center gap-2.5 text-left group transition-transform active:scale-95 cursor-pointer"
           >
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#8C6D58] to-[#4A3326] flex items-center justify-center text-white shadow-md shadow-[#8C6D58]/20 group-hover:shadow-lg transition-all">
               <BookOpen className="w-5 h-5 text-[#FBF8F3]" />
@@ -76,6 +80,23 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right CTA Actions */}
         <div className="flex items-center gap-2 sm:gap-3">
           
+          {/* Supabase Status Pill */}
+          <button
+            onClick={onOpenSupabaseModal}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer shadow-xs ${
+              isSupabaseActive
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 animate-pulse'
+            }`}
+            title="Klik untuk Kelola Koneksi Supabase & Skrip SQL"
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="hidden md:inline">
+              {isSupabaseActive ? 'Supabase Terhubung' : 'Setup Supabase'}
+            </span>
+            <span className={`w-2 h-2 rounded-full ${isSupabaseActive ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          </button>
+
           {/* Welcome Screen Button */}
           <button
             onClick={onOpenWelcome}
@@ -83,13 +104,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="Buka Tampilan Awal / Cover Poster"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Tampilan Awal</span>
+            <span className="hidden lg:inline">Tampilan Awal</span>
           </button>
 
-          {/* Favorites shortcut on mobile */}
+          {/* Favorites shortcut */}
           <button
             onClick={() => onTabChange('favorit')}
-            className="p-2 sm:px-3 sm:py-2 rounded-full bg-white/80 hover:bg-white text-[#7A533E] border border-[#E6DAC8] text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm"
+            className="p-2 sm:px-3 sm:py-2 rounded-full bg-white/80 hover:bg-white text-[#7A533E] border border-[#E6DAC8] text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
             title="Lihat Novel Favorit"
           >
             <Heart className="w-4 h-4 text-rose-500 fill-rose-100" />
@@ -99,7 +120,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Add Novel CTA */}
           <button
             onClick={onOpenAddModal}
-            className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-full bg-gradient-to-r from-[#697D67] to-[#4E5D4C] hover:from-[#5A6D58] hover:to-[#3F4D3D] text-white text-xs sm:text-sm font-semibold shadow-md shadow-[#697D67]/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            className="flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-semibold shadow-md shadow-emerald-700/20 transition-all transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Tambah Novel</span>
