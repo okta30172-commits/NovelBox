@@ -1,0 +1,6 @@
+{
+  "name": "NOVEA – Digital Novel Library",
+  "description": "Perpustakaan novel digital modern untuk menyimpan, mengelola, mencari, dan membaca novel dalam format PDF dengan nuansa estetik dan elegan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

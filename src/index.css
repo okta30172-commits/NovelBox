@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-cream: #FBF8F3;
+    --bg-cream-card: #FFFFFF;
+    --bg-cream-warm: #F4EDE2;
+    --text-primary: #2C241E;
+    --text-muted: #73675C;
+    --brown-wood: #7A533E;
+    --brown-dark: #4A3326;
+    --brown-light: #C4A482;
+    --sage-dark: #3F5241;
+    --sage-main: #697D67;
+    --sage-light: #DCE5DA;
+    --sage-soft: #EEF3ED;
+    --rose-accent: #E88B97;
+  }
+
+  body {
+    background-color: #FAF6F0;
+    color: #2C241E;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, .font-serif-novel {
+    font-family: 'Playfair Display', 'Lora', Georgia, serif;
+  }
+
+  /* Custom scrollbar for library comfort */
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #F2ECE1;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #CBB9A5;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #A99580;
+  }
+}
+
+/* Reader paper texture & sepia glow */
+.paper-shadow {
+  box-shadow: 0 10px 30px -5px rgba(62, 45, 33, 0.08), 0 4px 6px -2px rgba(62, 45, 33, 0.03);
+}
+
+.book-card-shadow {
+  box-shadow: 0 8px 20px -4px rgba(78, 52, 34, 0.12), 0 2px 4px -1px rgba(78, 52, 34, 0.06);
+}
+
+.book-card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 28px -6px rgba(78, 52, 34, 0.18), 0 4px 8px -2px rgba(78, 52, 34, 0.08);
+}
